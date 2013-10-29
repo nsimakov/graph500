@@ -216,15 +216,110 @@ int main(int argc, char** argv) {
 
   /* Parse arguments. */
   int SCALE = 16;
-  int edgefactor = 16; /* nedges / nvertices, i.e., 2*avg. degree */
-  if (argc >= 2) SCALE = atoi(argv[1]);
-  if (argc >= 3) edgefactor = atoi(argv[2]);
-  if (argc <= 1 || argc >= 4 || SCALE == 0 || edgefactor == 0) {
-    if (rank == 0) {
-      fprintf(stderr, "Usage: %s SCALE edgefactor\n  SCALE = log_2(# vertices) [integer, required]\n  edgefactor = (# edges) / (# vertices) = .5 * (average vertex degree) [integer, defaults to 16]\n(Random number seed and Kronecker initiator are in main.c)\n", argv[0]);
+    int edgefactor = 16; /* nedges / nvertices, i.e., 2*avg. degree */
+    int num_bfs_roots = 64;
+    int bCompareMD5=1;
+    int bRunPerf=1;
+    int bRunVal=1;
+    float timeForPerf=300.0;
+    int numberOfCyclesForPerf=300;
+    uint8_t refMD5[16];
+    int64_t* refEdgeCounts = NULL;
+    int64_t* refBFS_Roots = NULL;
+
+
+    if ( !(argc == 2 || argc == 3)){
+        if (rank == 0)
+      	  fprintf(stderr, "Usage: %s input_file [number of threads]\n", argv[0]);
+          //fprintf(stderr, "Usage: %s SCALE edgefactor\n  SCALE = log_2(# vertices) [integer, required]\n  edgefactor = (# edges) / (# vertices) = .5 * (average vertex degree) [integer, defaults to 16]\n(Random number seed and Kronecker initiator are in main.c)\n", argv[0]);
+        MPI_Abort(MPI_COMM_WORLD, 1);
     }
-    MPI_Abort(MPI_COMM_WORLD, 1);
-  }
+    if ( argc == 3){
+  	  int threads=atoi(argv[2]);
+  #ifdef _OPENMP
+  	  omp_set_num_threads(threads);
+  #else
+  	  if(threads!=1)
+  		  fprintf(stderr, "ERROR: %s compiled without OpenMP\n", argv[0]);
+  #endif
+    }
+
+
+    {
+  	  int iRead=0;
+  	  int i;
+  	  FILE *input_file;
+  	  char cbuf[256];
+
+  	  if (rank == 0)
+  		  fprintf(stderr, "Reading input from %s\n",argv[1]);
+
+  	  input_file=fopen(argv[1],"r");
+
+  	  if(input_file==NULL){
+  		  if (rank == 0)
+  			  fprintf(stderr, "Error : can no open %s file\n",argv[1]);
+  		  MPI_Barrier(MPI_COMM_WORLD);
+  		  MPI_Abort(MPI_COMM_WORLD, 1);
+  	  }
+
+  	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&SCALE);
+  	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&edgefactor);
+  	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&num_bfs_roots);
+  	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&bCompareMD5);
+  	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&bRunPerf);
+  	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&bRunVal);
+  	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%f",&timeForPerf);
+  	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&numberOfCyclesForPerf);
+  	  fgets(cbuf,256,input_file);
+  	  for (i = 0; i < 16; i++)
+  		  iRead+=sscanf(cbuf+i*2,"%2x",&refMD5[i]);
+  		  //refMD5[i]=cbuf[i];
+
+  	  refEdgeCounts = (int64_t*)xmalloc(num_bfs_roots * sizeof(int64_t));
+  	  refBFS_Roots = (int64_t*)xmalloc(num_bfs_roots * sizeof(int64_t));
+
+  	  for (i = 0; i < num_bfs_roots; i++){
+  		  fgets(cbuf,256,input_file);
+  		  iRead+=sscanf(cbuf,"%lu %lu ",refBFS_Roots+i,refEdgeCounts+i);
+  	  }
+
+
+  	  printf("%d %d\n",rank,iRead);
+  	  printf("%d %d\n",rank,SCALE);
+  	  printf("%d %d\n",rank,edgefactor);
+  	  if (rank == 0){
+
+  		  fprintf(stderr, "\tScale: %d\n",SCALE);
+  		  fprintf(stderr, "\tEdgefactor %d\n",edgefactor);
+  		  fprintf(stderr, "\tNumber of BFS roots: %d\n",num_bfs_roots);
+  		  fprintf(stderr, "\tCompare md5 on initial edge list: %d\n",bCompareMD5);
+  		  fprintf(stderr, "\tRun performance section: %d\n",bRunPerf);
+  		  fprintf(stderr, "\tRun validation: %d\n",bRunVal);
+  		  fprintf(stderr, "\tTime for performance section in seconds: %f\n",timeForPerf);
+  		  fprintf(stderr, "\tMax number of cycles: %d\n",numberOfCyclesForPerf);
+  		  fprintf(stderr, "\tReffrence md5 on initial edge list: ");
+
+  		  for (i = 0; i < 16; i++)
+  			  fprintf(stderr, "%2.2x", refMD5[i]);
+  		  fprintf(stderr, "\n");
+
+  	  }
+  	  fclose(input_file);
+
+  	  //MPI_Barrier(MPI_COMM_WORLD);
+  	  //MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+//  int SCALE = 16;
+//  int edgefactor = 16; /* nedges / nvertices, i.e., 2*avg. degree */
+//  if (argc >= 2) SCALE = atoi(argv[1]);
+//  if (argc >= 3) edgefactor = atoi(argv[2]);
+//  if (argc <= 1 || argc >= 4 || SCALE == 0 || edgefactor == 0) {
+//    if (rank == 0) {
+//      fprintf(stderr, "Usage: %s SCALE edgefactor\n  SCALE = log_2(# vertices) [integer, required]\n  edgefactor = (# edges) / (# vertices) = .5 * (average vertex degree) [integer, defaults to 16]\n(Random number seed and Kronecker initiator are in main.c)\n", argv[0]);
+//    }
+//    MPI_Abort(MPI_COMM_WORLD, 1);
+//  }
 
   uint64_t seed1 = 2, seed2 = 3;
 
@@ -271,7 +366,7 @@ int main(int argc, char** argv) {
   /* Make the raw graph edges. */
   /* Get roots for BFS runs, plus maximum vertex with non-zero degree (used by
    * validator). */
-  int num_bfs_roots = 64;
+  //int num_bfs_roots = 64;
   int64_t* bfs_roots = (int64_t*)xmalloc(num_bfs_roots * sizeof(int64_t));
   int64_t max_used_vertex = 0;
 
