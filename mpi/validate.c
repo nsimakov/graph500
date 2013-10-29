@@ -34,7 +34,8 @@ static inline void write_pred_entry_depth(int64_t* loc, uint16_t depth) {
 }
 
 /* Returns true if all values are in range. */
-static int check_value_ranges(const int64_t nglobalverts, const size_t nlocalverts, const int64_t* const pred) {
+//static
+int check_value_ranges(const int64_t nglobalverts, const size_t nlocalverts, const int64_t* const pred) {
   int any_range_errors = 0;
   {
     size_t ii;

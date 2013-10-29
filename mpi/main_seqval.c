@@ -64,6 +64,151 @@ static void get_statistics(const double x[], int n, double r[s_LAST]) {
   free(xx);
 }
 
+static inline int64_t get_pred_from_pred_entry(int64_t val) {
+  return (val << 16) >> 16;
+}
+/* Returns true if result is valid.  Also, updates high 16 bits of each element
+ * of pred to contain the BFS level number (or -1 if not visited) of each
+ * vertex; this is based on the predecessor map if the user didn't provide it.
+ * */
+int validate_bfs_result_seq(const tuple_graph* const tg, const int64_t nglobalverts, const size_t nlocalverts, const int64_t root,
+		int64_t* const pred, int64_t* const edge_visit_count_ptr, int64_t const max_used_vertex)
+{
+	assert (tg->edgememory_size >= 0 && tg->max_edgememory_size >= tg->edgememory_size && tg->max_edgememory_size <= tg->nglobaledges);
+	assert (pred);
+	*edge_visit_count_ptr = 0; /* Ensure it is a valid pointer */
+	int ranges_ok = check_value_ranges(nglobalverts, nlocalverts, pred);
+	if (root < 0 || root >= nglobalverts) {
+		fprintf(stderr, "%d: Validation error: root vertex %" PRId64 " is invalid.\n", rank, root);
+		ranges_ok = 0;
+	}
+	if (!ranges_ok) return 0; /* Fail */
+
+	int validation_passed = 1;
+	int root_owner;
+	size_t root_local;
+	get_vertex_distribution_for_pred(1, &root, &root_owner, &root_local);
+	int root_is_mine = (root_owner == rank);
+
+	/* Get maximum values so loop counts are consistent across ranks. */
+	uint64_t maxlocalverts_ui = nlocalverts;
+	MPI_Allreduce(MPI_IN_PLACE, &maxlocalverts_ui, 1, MPI_UINT64_T, MPI_MAX, MPI_COMM_WORLD);
+	size_t maxlocalverts = (size_t)maxlocalverts_ui;
+
+	ptrdiff_t max_bufsize = tuple_graph_max_bufsize(tg);
+	ptrdiff_t edge_chunk_size = ptrdiff_min(HALF_CHUNKSIZE, max_bufsize);
+
+	assert (tg->edgememory_size >= 0 && tg->max_edgememory_size >= tg->edgememory_size && tg->max_edgememory_size <= tg->nglobaledges);
+	assert (pred);
+
+	/* combine results from all processes */
+	int64_t* restrict pred_vtx = NULL;
+	{
+		int irank;
+		uint64_t i;
+		int64_t nlocalvertsMax=nlocalverts;
+		MPI_Allreduce(MPI_IN_PLACE, &nlocalvertsMax, 1, MPI_UINT64_T, MPI_MAX, MPI_COMM_WORLD);
+		if(rank==0)
+		{
+
+			pred_vtx = (int64_t*)xmalloc(nglobalverts * sizeof(int64_t));
+			int64_t* pred_tmp;
+			int64_t nlocalvertsRemote;
+
+			pred_tmp=pred;
+			nlocalvertsRemote=nlocalverts;
+			for(irank=0;irank<size;irank++)
+			{
+				MPI_Barrier(MPI_COMM_WORLD);
+
+
+				if(irank!=0)
+				{
+					MPI_Recv(&nlocalvertsRemote, 1, MPI_UINT64_T, irank, 0, MPI_COMM_WORLD,
+								 MPI_STATUS_IGNORE);
+					MPI_Recv(pred_tmp, nlocalvertsRemote, MPI_UINT64_T, irank, 1, MPI_COMM_WORLD,
+													 MPI_STATUS_IGNORE);
+					//printf("%d %" PRId64 " \n",rank,nlocalvertsRemote);
+				}
+
+				for(i=0;i<nlocalvertsRemote ;i++)
+				{
+					pred_vtx[vertex_to_global_for_pred(irank,i)]=get_pred_from_pred_entry(pred_tmp[i]);
+				}
+
+
+				if(irank==0)
+					pred_tmp = (int64_t*)xmalloc(nlocalvertsMax * sizeof(int64_t));
+			}
+			xfree(pred_tmp);
+		}
+		else
+		{
+			for(irank=0;irank<size;irank++)
+			{
+				MPI_Barrier(MPI_COMM_WORLD);
+				if(rank==irank)
+				{
+					MPI_Send(&nlocalverts, 1, MPI_UINT64_T, 0, 0, MPI_COMM_WORLD);
+					MPI_Send(pred, nlocalverts, MPI_UINT64_T, 0, 1, MPI_COMM_WORLD);
+				}
+			}
+		}
+		{
+			int irank;
+			uint64_t i;
+			for(irank=0;irank<size;irank++)
+			{
+				MPI_Barrier(MPI_COMM_WORLD);
+				//if(rank==irank)
+				//	for(i=0;i<nlocalverts ;i++)
+				//		fprintf(stderr, "%d %" PRId64 " %" PRId64 " %" PRId64 "\n", rank,i,get_pred_from_pred_entry(pred[i]),vertex_to_global_for_pred(rank,i));
+			}
+		}
+	}
+	int64_t nedge_traversed;
+
+	if(rank==0)
+	{
+		uint64_t i, max_bfsvtx=0;
+
+		/*for(i=0;i<tg->edgememory_size ;i++)
+		{
+			if(tg->edgememory[i].v0>max_bfsvtx)
+				max_bfsvtx=tg->edgememory[i].v0;
+			if(tg->edgememory[i].v1>max_bfsvtx)
+				max_bfsvtx=tg->edgememory[i].v1;
+		}*/
+
+		/*int64_t* restrict pred_vtx = (int64_t*)xmalloc((max_used_vertex+1) * sizeof(int64_t));
+		for(i=0;i<=max_used_vertex ;i++)
+		{
+			pred_vtx[i]=get_pred_from_pred_entry(pred[i]);
+		}*/
+
+
+		nedge_traversed=verify_bfs_tree (pred_vtx, max_used_vertex,
+				 root,
+				 tg->edgememory, tg->nglobaledges);
+
+
+		if(nedge_traversed<0)
+		{
+			fprintf(stderr, "Validation error: code %" PRId64 ".\n", nedge_traversed);
+			validation_passed=0;
+		}
+	}
+	if(rank==0)
+	{
+		xfree(pred_vtx);
+	}
+	MPI_Allreduce(MPI_IN_PLACE, &nedge_traversed, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+	*edge_visit_count_ptr=nedge_traversed;
+	/* Collect the global validation result. */
+	MPI_Allreduce(MPI_IN_PLACE, &validation_passed, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD);
+	return validation_passed;
+}
+
 int main(int argc, char** argv) {
   MPI_Init(&argc, &argv);
 
@@ -80,6 +225,7 @@ int main(int argc, char** argv) {
     }
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
+
   uint64_t seed1 = 2, seed2 = 3;
 
   const char* filename = getenv("TMPFILE");
@@ -349,7 +495,8 @@ int main(int argc, char** argv) {
 
       double validate_start = MPI_Wtime();
       int64_t edge_visit_count;
-      int validation_passed_one = validate_bfs_result(&tg, max_used_vertex + 1, nlocalverts, root, pred, &edge_visit_count);
+      int validation_passed_one = validate_bfs_result_seq(&tg, nglobalverts, nlocalverts, root, pred, &edge_visit_count,max_used_vertex);
+      //int validation_passed_one = validate_bfs_result(&tg, max_used_vertex + 1, nlocalverts, root, pred, &edge_visit_count);
       double validate_stop = MPI_Wtime();
       validate_times[bfs_root_idx] = validate_stop - validate_start;
       if (rank == 0) fprintf(stderr, "Validate time for BFS %d is %f\n", bfs_root_idx, validate_times[bfs_root_idx]);

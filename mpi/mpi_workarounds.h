@@ -33,7 +33,8 @@
 /* If you have problems with one-sided operations (such as crashes in the
  * result validator), you can switch to an emulation of MPI-2 one-sided
  * operations: */
-#undef EMULATE_ONE_SIDED
+//#undef EMULATE_ONE_SIDED
+#define EMULATE_ONE_SIDED
 /* #define EMULATE_ONE_SIDED */
 
 /* End of user settings ----------------------------------- */
