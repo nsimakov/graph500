@@ -6,7 +6,6 @@
 1     #Run validation
 120   #Time for performance section in seconds
 5     #Max number of cycles
-467048ff7778d32be8f24087afcdd3da #md5 on initial edge list
 29348 1048570 # [ 0] bfs_roots edge_visit_count
 8064 1048570 # [ 1] bfs_roots edge_visit_count
 61854 1048570 # [ 2] bfs_roots edge_visit_count

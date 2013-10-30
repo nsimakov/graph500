@@ -223,7 +223,7 @@ int main(int argc, char** argv) {
     int bRunVal=1;
     float timeForPerf=300.0;
     int numberOfCyclesForPerf=300;
-    uint8_t refMD5[16];
+    //uint8_t refMD5[16];
     int64_t* refEdgeCounts = NULL;
     int64_t* refBFS_Roots = NULL;
 
@@ -271,9 +271,9 @@ int main(int argc, char** argv) {
   	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&bRunVal);
   	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%f",&timeForPerf);
   	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&numberOfCyclesForPerf);
-  	  fgets(cbuf,256,input_file);
-  	  for (i = 0; i < 16; i++)
-  		  iRead+=sscanf(cbuf+i*2,"%2x",&refMD5[i]);
+  	  //fgets(cbuf,256,input_file);
+  	  //for (i = 0; i < 16; i++)
+  		//  iRead+=sscanf(cbuf+i*2,"%2x",&refMD5[i]);
   		  //refMD5[i]=cbuf[i];
 
   	  refEdgeCounts = (int64_t*)xmalloc(num_bfs_roots * sizeof(int64_t));
@@ -285,9 +285,9 @@ int main(int argc, char** argv) {
   	  }
 
 
-  	  printf("%d %d\n",rank,iRead);
-  	  printf("%d %d\n",rank,SCALE);
-  	  printf("%d %d\n",rank,edgefactor);
+  	  //printf("%d %d\n",rank,iRead);
+  	  //printf("%d %d\n",rank,SCALE);
+  	  //printf("%d %d\n",rank,edgefactor);
   	  if (rank == 0){
 
   		  fprintf(stderr, "\tScale: %d\n",SCALE);
@@ -298,11 +298,18 @@ int main(int argc, char** argv) {
   		  fprintf(stderr, "\tRun validation: %d\n",bRunVal);
   		  fprintf(stderr, "\tTime for performance section in seconds: %f\n",timeForPerf);
   		  fprintf(stderr, "\tMax number of cycles: %d\n",numberOfCyclesForPerf);
-  		  fprintf(stderr, "\tReffrence md5 on initial edge list: ");
+  		  fprintf(stderr, "\tNumber of MPI processes: %d\n",size);
+#ifdef _OPENMP
+  	      fprintf(stderr, "\tMax number of threads per MPI process: %d\n",omp_get_max_threads());
 
-  		  for (i = 0; i < 16; i++)
-  			  fprintf(stderr, "%2.2x", refMD5[i]);
-  		  fprintf(stderr, "\n");
+#else
+		  fprintf(stderr, "\tMax number of threads per MPI process: compiled without OpenMP\n");
+#endif
+  		  //fprintf(stderr, "\tReffrence md5 on initial edge list: ");
+
+  		  //for (i = 0; i < 16; i++)
+  			//  fprintf(stderr, "%2.2x", refMD5[i]);
+  		  //fprintf(stderr, "\n");
 
   	  }
   	  fclose(input_file);
@@ -516,6 +523,10 @@ int main(int argc, char** argv) {
           if (root_ok) break;
         }
         bfs_roots[bfs_root_idx] = root;
+        if((refBFS_Roots!=NULL) && (rank==0)){
+        	if(refBFS_Roots[bfs_root_idx] != bfs_roots[bfs_root_idx])
+        		fprintf(stderr,"ERROR: BFS roots do not match reffrence (Ref: %lu Here: %lu)\n",refBFS_Roots[bfs_root_idx], bfs_roots[bfs_root_idx]);
+        }
       }
       num_bfs_roots = bfs_root_idx;
 
@@ -560,6 +571,7 @@ int main(int argc, char** argv) {
   /* Number of edges visited in each BFS; a double so get_statistics can be
    * used directly. */
   double* edge_counts = (double*)xmalloc(num_bfs_roots * sizeof(double));
+  int64_t* edge_counts_ul = (int64_t*)xmalloc(num_bfs_roots * sizeof(int64_t));
 
   /* Run BFS. */
   int validation_passed = 1;
@@ -569,55 +581,75 @@ int main(int argc, char** argv) {
   int64_t* pred = (int64_t*)xMPI_Alloc_mem(nlocalverts * sizeof(int64_t));
 
   int bfs_root_idx;
-  for (bfs_root_idx = 0; bfs_root_idx < num_bfs_roots; ++bfs_root_idx) {
-    int64_t root = bfs_roots[bfs_root_idx];
-
-    if (rank == 0) fprintf(stderr, "Running BFS %d\n", bfs_root_idx);
-
-    /* Clear the pred array. */
-    memset(pred, 0, nlocalverts * sizeof(int64_t));
-
-    /* Do the actual BFS. */
-    double bfs_start = MPI_Wtime();
-    run_bfs(root, &pred[0]);
-    double bfs_stop = MPI_Wtime();
-    bfs_times[bfs_root_idx] = bfs_stop - bfs_start;
-    if (rank == 0) fprintf(stderr, "Time for BFS %d is %f\n", bfs_root_idx, bfs_times[bfs_root_idx]);
-
-    /* Validate result. */
-    if (!getenv("SKIP_VALIDATION")) {
-      if (rank == 0) fprintf(stderr, "Validating BFS %d\n", bfs_root_idx);
-
-      double validate_start = MPI_Wtime();
-      int64_t edge_visit_count;
-      int validation_passed_one = validate_bfs_result_seq(&tg, nglobalverts, nlocalverts, root, pred, &edge_visit_count,max_used_vertex);
-      //int validation_passed_one = validate_bfs_result(&tg, max_used_vertex + 1, nlocalverts, root, pred, &edge_visit_count);
-      double validate_stop = MPI_Wtime();
-      validate_times[bfs_root_idx] = validate_stop - validate_start;
-      if (rank == 0) fprintf(stderr, "Validate time for BFS %d is %f\n", bfs_root_idx, validate_times[bfs_root_idx]);
-      edge_counts[bfs_root_idx] = (double)edge_visit_count;
-      if (rank == 0) fprintf(stderr, "TEPS for BFS %d is %g\n", bfs_root_idx, edge_visit_count / bfs_times[bfs_root_idx]);
-
-      if (!validation_passed_one) {
-	validation_passed = 0;
-	if (rank == 0) fprintf(stderr, "Validation failed for this BFS root; skipping rest.\n");
-	break;
-      }
-    }
+  int CyclesPassed=0;
+  int ValidationStep=0;
+  if(bRunPerf==0)
+  {
+	  ValidationStep=1;
+	  numberOfCyclesForPerf=1;
   }
+  for (bfs_root_idx = 0; bfs_root_idx < num_bfs_roots; ++bfs_root_idx)
+  	  bfs_times[bfs_root_idx]=0.0;
 
-  MPI_Free_mem(pred);
-  free(bfs_roots);
-  free_graph_data_structure();
+  double performance_start = MPI_Wtime();
 
-  if (tg.data_in_file) {
-    MPI_File_close(&tg.edgefile);
-  } else {
-    free(tg.edgememory); tg.edgememory = NULL;
+  while(1){
+	  if (rank == 0)fprintf(stderr, "Starting cycle %d.\n", CyclesPassed);
+
+	  for (bfs_root_idx = 0; bfs_root_idx < num_bfs_roots; ++bfs_root_idx) {
+		int64_t root = bfs_roots[bfs_root_idx];
+
+		if (rank == 0) fprintf(stderr, "Running BFS %d\n", bfs_root_idx);
+
+		/* Clear the pred array. */
+		memset(pred, 0, nlocalverts * sizeof(int64_t));
+
+		/* Do the actual BFS. */
+		double bfs_start = MPI_Wtime();
+		run_bfs(root, &pred[0]);
+		double bfs_stop = MPI_Wtime();
+		bfs_times[bfs_root_idx] = bfs_stop - bfs_start;
+		if (rank == 0) fprintf(stderr, "Time for BFS %d is %f\n", bfs_root_idx, bfs_times[bfs_root_idx]);
+
+		/* Validate result. */
+		if (!getenv("SKIP_VALIDATION")) {
+		  if (rank == 0) fprintf(stderr, "Validating BFS %d\n", bfs_root_idx);
+
+		  double validate_start = MPI_Wtime();
+		  int64_t edge_visit_count;
+		  int validation_passed_one = validate_bfs_result_seq(&tg, nglobalverts, nlocalverts, root, pred, &edge_visit_count,max_used_vertex);
+		  //int validation_passed_one = validate_bfs_result(&tg, max_used_vertex + 1, nlocalverts, root, pred, &edge_visit_count);
+		  double validate_stop = MPI_Wtime();
+		  validate_times[bfs_root_idx] = validate_stop - validate_start;
+		  if (rank == 0) fprintf(stderr, "Validate time for BFS %d is %f\n", bfs_root_idx, validate_times[bfs_root_idx]);
+		  edge_counts[bfs_root_idx] = (double)edge_visit_count;
+		  edge_counts_ul[bfs_root_idx] = edge_visit_count;
+		  if (rank == 0) fprintf(stderr, "TEPS for BFS %d is %g\n", bfs_root_idx, edge_visit_count / bfs_times[bfs_root_idx]);
+
+		  if((refEdgeCounts!=NULL) && (rank==0)){
+			  if(refEdgeCounts[bfs_root_idx]!=edge_counts_ul[bfs_root_idx])
+				  fprintf(stderr,"ERROR: Edge count do not match reference (Ref: %lu Here: %lu)\n",refEdgeCounts[bfs_root_idx], edge_counts_ul[bfs_root_idx]);
+		  }
+
+		  if (!validation_passed_one) {
+			  validation_passed = 0;
+			  if (rank == 0) fprintf(stderr, "Validation failed for this BFS root; skipping rest.\n");
+			  break;
+		  }
+		}
+	  }
+
+	  break;
+
+	  if (validation_passed==0)
+		  break;
   }
-
   /* Print results. */
   if (rank == 0) {
+	int i;
+	for (i = 0; i < num_bfs_roots; ++i)
+		fprintf(stdout, "%lu %lu # [%2d] bfs_roots edge_visit_count\n",bfs_roots[i],edge_counts_ul[i],i);
+
     if (!validation_passed) {
       fprintf(stdout, "No results printed for invalid run.\n");
     } else {
@@ -680,9 +712,21 @@ int main(int argc, char** argv) {
 #endif
     }
   }
+
+
+  MPI_Free_mem(pred);
+  free(bfs_roots);
+  free_graph_data_structure();
+
+  if (tg.data_in_file) {
+    MPI_File_close(&tg.edgefile);
+  } else {
+    free(tg.edgememory); tg.edgememory = NULL;
+  }
+
   free(bfs_times);
   free(validate_times);
-
+  free(edge_counts_ul);
   cleanup_globals();
   MPI_Finalize();
   return 0;
