@@ -55,7 +55,8 @@ typedef struct tuple_graph {
   int64_t nglobaledges; /* Number of edges in graph, in both cases */
 } tuple_graph;
 
-#define FILE_CHUNKSIZE ((MPI_Offset)(1) << 23) /* Size of one file I/O block or memory block to be processed in one step, in edges */
+//#define FILE_CHUNKSIZE ((MPI_Offset)(1) << 23) /* Size of one file I/O block or memory block to be processed in one step, in edges */
+#define FILE_CHUNKSIZE ((MPI_Offset)(1) << 30) /* Size of one file I/O block or memory block to be processed in one step, in edges */
 
 /* Simple iteration of edge data or file; cannot be nested. */
 #define ITERATE_TUPLE_GRAPH_BLOCK_COUNT(tg) \
