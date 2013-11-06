@@ -30,6 +30,11 @@
 #include <stdint.h>
 #include <inttypes.h>
 
+#ifdef SHOWCPUAFF
+#include <sys/types.h>
+#include <unistd.h>
+#endif
+
 static int compare_doubles(const void* a, const void* b) {
   double aa = *(const double*)a;
   double bb = *(const double*)b;
@@ -313,6 +318,18 @@ int main(int argc, char** argv) {
 
   	  }
   	  fclose(input_file);
+#ifdef SHOWCPUAFF
+  	  pid_t pid=getpid();
+  	  for (i = 0; i < size; i++){
+  		  if(i==rank){
+  			fprintf(stderr, "MPI Process %d\n",rank);
+  			sprintf(cbuf,"grep -i cpus_allowed /proc/%d/status",pid);
+  			system(cbuf);
+  		  }
+  		  MPI_Barrier(MPI_COMM_WORLD);
+  	  }
+#endif
+
 
   	  //MPI_Barrier(MPI_COMM_WORLD);
   	  //MPI_Abort(MPI_COMM_WORLD, 1);
@@ -599,7 +616,7 @@ int main(int argc, char** argv) {
 	  for (bfs_root_idx = 0; bfs_root_idx < num_bfs_roots; ++bfs_root_idx) {
 		int64_t root = bfs_roots[bfs_root_idx];
 
-		if (rank == 0) fprintf(stderr, "Running BFS %d\n", bfs_root_idx);
+		if ((rank == 0)&&(ValidationStep)) fprintf(stderr, "Running BFS %d\n", bfs_root_idx);
 
 		/* Clear the pred array. */
 		memset(pred, 0, nlocalverts * sizeof(int64_t));
@@ -608,11 +625,12 @@ int main(int argc, char** argv) {
 		double bfs_start = MPI_Wtime();
 		run_bfs(root, &pred[0]);
 		double bfs_stop = MPI_Wtime();
-		bfs_times[bfs_root_idx] = bfs_stop - bfs_start;
-		if (rank == 0) fprintf(stderr, "Time for BFS %d is %f\n", bfs_root_idx, bfs_times[bfs_root_idx]);
+		bfs_times[bfs_root_idx] += bfs_stop - bfs_start;
+		if ((rank == 0)&&(ValidationStep)) fprintf(stderr, "Time for BFS %d is %f\n", bfs_root_idx, bfs_stop - bfs_start);
 
 		/* Validate result. */
-		if (!getenv("SKIP_VALIDATION")) {
+		//if (!getenv("SKIP_VALIDATION")) {
+		if (ValidationStep) {
 		  if (rank == 0) fprintf(stderr, "Validating BFS %d\n", bfs_root_idx);
 
 		  double validate_start = MPI_Wtime();
@@ -638,11 +656,23 @@ int main(int argc, char** argv) {
 		  }
 		}
 	  }
-
-	  break;
-
+	  CyclesPassed++;
+	  if((MPI_Wtime()-performance_start>=timeForPerf)||(CyclesPassed>=numberOfCyclesForPerf)){
+		  if(bRunVal){
+			  if(ValidationStep==0)
+				  ValidationStep=1;
+			  else break;
+		  }
+		  else break;
+	  }
 	  if (validation_passed==0)
 		  break;
+  }
+  if (rank == 0)
+	  fprintf(stderr,"Completed %d cycles\n", CyclesPassed);
+
+  for (bfs_root_idx = 0; bfs_root_idx < num_bfs_roots; ++bfs_root_idx) {
+	  bfs_times[bfs_root_idx]/=CyclesPassed;
   }
   /* Print results. */
   if (rank == 0) {

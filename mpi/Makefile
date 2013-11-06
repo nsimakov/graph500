@@ -1,6 +1,6 @@
-CFLAGS = -fopenmp -g -Wall -Drestrict=__restrict__ -O3 -DNDEBUG -ffast-math # -g -pg
+CFLAGS = -openmp -g -Wall -Drestrict=__restrict__ -O3 -DNDEBUG -ffast-math -DSHOWCPUAFF # -g -pg
 # CFLAGS = -g -Wall -Drestrict= -DGRAPH_GENERATOR_MPI
-LDFLAGS = -fopenmp -g # -g -pg
+LDFLAGS = -openmp -g # -g -pg
 MPICC = mpicc
 
 all: graph500_mpi_replicated_seqval
