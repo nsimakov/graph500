@@ -1,9 +1,9 @@
-CFLAGS = -openmp -g -Wall -Drestrict=__restrict__ -O3 -DNDEBUG -ffast-math -DSHOWCPUAFF # -g -pg
-# CFLAGS = -g -Wall -Drestrict= -DGRAPH_GENERATOR_MPI
+CFLAGS = -openmp -g -Wall -std=c99 -Drestrict=__restrict__ -O3 -xHost -DNDEBUG -DSHOWCPUAFF -DDOONENODEOMPPURE # -g -pg
+# CFLAGS = -g -Wall -Drestrict= -DGRAPH_GENERATOR_MPI -ffast-math
 LDFLAGS = -openmp -g # -g -pg
 MPICC = mpicc
 
-all: graph500_mpi_replicated_seqval
+all: graph500_mpi_replicated_csc_seqval
 # graph500_mpi_replicated
 
 #all: graph500_mpi_simple graph500_mpi_one_sided graph500_mpi_replicated graph500_mpi_replicated_csc graph500_mpi_custom
@@ -27,9 +27,11 @@ graph500_mpi_replicated_csc: main.c bfs_replicated_csc.c $(SOURCES) $(HEADERS) $
 graph500_mpi_custom: main.c bfs_custom.c $(SOURCES) $(HEADERS) $(GENERATOR_SOURCES)
 	$(MPICC) $(CFLAGS) $(LDFLAGS) -o graph500_mpi_custom  main.c bfs_custom.c $(SOURCES) $(GENERATOR_SOURCES) -lm
 
-graph500_mpi_replicated_seqval: main_seqval.c bfs_replicated.c ../verify.c ../xalloc.c $(SOURCES) $(HEADERS) $(GENERATOR_SOURCES)
-	$(MPICC) $(CFLAGS) -DSEQVAL -DVERBOSE $(LDFLAGS) -o graph500_mpi_replicated_seqval main_seqval.c bfs_replicated.c ../verify.c ../xalloc.c $(SOURCES) $(GENERATOR_SOURCES) -lm
+graph500_mpi_replicated_seqval: main_seqval.c bfs_replicated.c ../verify.c ../xalloc.c ../omp-csr/omp-csr.c $(SOURCES) $(HEADERS) $(GENERATOR_SOURCES)
+	$(MPICC) $(CFLAGS) -DSEQVAL -DVERBOSE $(LDFLAGS) -I../omp-csr -o graph500_mpi_replicated_seqval main_seqval.c bfs_replicated.c ../verify.c ../xalloc.c ../omp-csr/omp-csr.c $(SOURCES) $(GENERATOR_SOURCES) -lm
 
+graph500_mpi_replicated_csc_seqval: main_seqval.c bfs_replicated_csc.c ../verify.c ../xalloc.c ../omp-csr/omp-csr.c $(SOURCES) $(HEADERS) $(GENERATOR_SOURCES)
+	$(MPICC) $(CFLAGS) -DSEQVAL -DVERBOSE $(LDFLAGS) -I../omp-csr -o graph500_mpi_replicated_csc_seqval main_seqval.c bfs_replicated_csc.c ../verify.c ../xalloc.c ../omp-csr/omp-csr.c $(SOURCES) $(GENERATOR_SOURCES) -lm
 
 clean:
 	-rm -f graph500_mpi_* *.o *.a

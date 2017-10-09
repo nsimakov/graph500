@@ -13,3 +13,6 @@ mpi/graph500_mpi_*
 generator/generator_test_mpi
 *.bin
 make-edgelist
+/generator/generator_test_omp
+/.cproject
+/.project

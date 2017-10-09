@@ -1,7 +1,7 @@
 24    #Scale
 16    #Edgefactor
 64    #num_bfs_roots
-1     #Compare md5 on initial edge list
+1     #Use pure OpenMP Implementation for single node
 1     #Run performance section
 1     #Run validation
 300   #Time for performance section in seconds

@@ -30,6 +30,11 @@
 #include <stdint.h>
 #include <inttypes.h>
 
+#ifdef SHOWCPUAFF
+#include <sys/types.h>
+#include <unistd.h>
+#endif
+
 static int compare_doubles(const void* a, const void* b) {
   double aa = *(const double*)a;
   double bb = *(const double*)b;
@@ -218,7 +223,7 @@ int main(int argc, char** argv) {
   int SCALE = 16;
     int edgefactor = 16; /* nedges / nvertices, i.e., 2*avg. degree */
     int num_bfs_roots = 64;
-    int bCompareMD5=1;
+    int bDoOneNodePureOpenMP=1;
     int bRunPerf=1;
     int bRunVal=1;
     float timeForPerf=300.0;
@@ -266,7 +271,7 @@ int main(int argc, char** argv) {
   	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&SCALE);
   	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&edgefactor);
   	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&num_bfs_roots);
-  	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&bCompareMD5);
+  	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&bDoOneNodePureOpenMP);
   	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&bRunPerf);
   	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%d",&bRunVal);
   	  fgets(cbuf,256,input_file);iRead+=sscanf(cbuf,"%f",&timeForPerf);
@@ -293,7 +298,7 @@ int main(int argc, char** argv) {
   		  fprintf(stderr, "\tScale: %d\n",SCALE);
   		  fprintf(stderr, "\tEdgefactor %d\n",edgefactor);
   		  fprintf(stderr, "\tNumber of BFS roots: %d\n",num_bfs_roots);
-  		  fprintf(stderr, "\tCompare md5 on initial edge list: %d\n",bCompareMD5);
+  		  fprintf(stderr, "\tUse pure OpenMP Implementation for single node: %d\n",bDoOneNodePureOpenMP);
   		  fprintf(stderr, "\tRun performance section: %d\n",bRunPerf);
   		  fprintf(stderr, "\tRun validation: %d\n",bRunVal);
   		  fprintf(stderr, "\tTime for performance section in seconds: %f\n",timeForPerf);
@@ -313,8 +318,18 @@ int main(int argc, char** argv) {
 
   	  }
   	  fclose(input_file);
-
-  	  //MPI_Barrier(MPI_COMM_WORLD);
+#ifdef SHOWCPUAFF
+  	  pid_t pid=getpid();
+  	  for (i = 0; i < size; i++){
+  		  if(i==rank){
+  			fprintf(stderr, "MPI Process %d\n",rank);
+  			sprintf(cbuf,"grep -i cpus_allowed /proc/%d/status",pid);
+  			system(cbuf);
+  		  }
+  		  MPI_Barrier(MPI_COMM_WORLD);
+  	  }
+#endif
+  	  MPI_Barrier(MPI_COMM_WORLD);
   	  //MPI_Abort(MPI_COMM_WORLD, 1);
     }
 //  int SCALE = 16;
@@ -327,7 +342,7 @@ int main(int argc, char** argv) {
 //    }
 //    MPI_Abort(MPI_COMM_WORLD, 1);
 //  }
-
+  MPI_Barrier(MPI_COMM_WORLD);
   uint64_t seed1 = 2, seed2 = 3;
 
   const char* filename = getenv("TMPFILE");
@@ -369,7 +384,7 @@ int main(int argc, char** argv) {
     MPI_File_set_view(tg.edgefile, 0, packed_edge_mpi_type, packed_edge_mpi_type, "native", MPI_INFO_NULL);
     MPI_File_set_atomicity(tg.edgefile, 0);
   }
-
+  MPI_Barrier(MPI_COMM_WORLD);
   /* Make the raw graph edges. */
   /* Get roots for BFS runs, plus maximum vertex with non-zero degree (used by
    * validator). */
@@ -553,6 +568,7 @@ int main(int argc, char** argv) {
       MPI_File_sync(tg.edgefile);
     }
   }
+  MPI_Barrier(MPI_COMM_WORLD);
   double make_graph_stop = MPI_Wtime();
   double make_graph_time = make_graph_stop - make_graph_start;
   if (rank == 0) { /* Not an official part of the results */
@@ -560,14 +576,24 @@ int main(int argc, char** argv) {
   }
 
   /* Make user's graph data structure. */
+  MPI_Barrier(MPI_COMM_WORLD);
   double data_struct_start = MPI_Wtime();
+#ifdef DOONENODEOMPPURE
+  if((size==1)&&(bDoOneNodePureOpenMP==1)){
+	  create_graph_from_edgelist (tg.edgememory, tg.nglobaledges);
+  }
+  else
+	  make_graph_data_structure(&tg);
+#else
   make_graph_data_structure(&tg);
+#endif
+  MPI_Barrier(MPI_COMM_WORLD);
   double data_struct_stop = MPI_Wtime();
   double data_struct_time = data_struct_stop - data_struct_start;
   if (rank == 0) { /* Not an official part of the results */
     fprintf(stderr, "construction_time:              %f s\n", data_struct_time);
   }
-
+  //MPI_Abort(MPI_COMM_WORLD, 1);
   /* Number of edges visited in each BFS; a double so get_statistics can be
    * used directly. */
   double* edge_counts = (double*)xmalloc(num_bfs_roots * sizeof(double));
@@ -577,22 +603,41 @@ int main(int argc, char** argv) {
   int validation_passed = 1;
   double* bfs_times = (double*)xmalloc(num_bfs_roots * sizeof(double));
   double* validate_times = (double*)xmalloc(num_bfs_roots * sizeof(double));
-  uint64_t nlocalverts = get_nlocalverts_for_pred();
-  int64_t* pred = (int64_t*)xMPI_Alloc_mem(nlocalverts * sizeof(int64_t));
+  uint64_t nlocalverts;
+  int64_t* pred;
+#ifdef DOONENODEOMPPURE
+  if((size==1)&&(bDoOneNodePureOpenMP==1)){
+	  nlocalverts = tg.nglobaledges;
+	  pred = (int64_t*)xMPI_Alloc_mem(nlocalverts * sizeof(int64_t));
+  }
+  else{
+	  nlocalverts = get_nlocalverts_for_pred();
+	  pred = (int64_t*)xMPI_Alloc_mem(nlocalverts * sizeof(int64_t));
+  }
+#else
+  nlocalverts = get_nlocalverts_for_pred();
+  pred = (int64_t*)xMPI_Alloc_mem(nlocalverts * sizeof(int64_t));
+#endif
+
 
   int bfs_root_idx;
   int CyclesPassed=0;
   int ValidationStep=0;
-  if(bRunPerf==0)
-  {
+  if(bRunPerf==0){
 	  ValidationStep=1;
 	  numberOfCyclesForPerf=1;
+  }
+  if(bRunVal==0){
+	  for (bfs_root_idx = 0; bfs_root_idx < num_bfs_roots; ++bfs_root_idx){
+		  edge_counts[bfs_root_idx] = (double)refEdgeCounts[bfs_root_idx];
+		  edge_counts_ul[bfs_root_idx] = refEdgeCounts[bfs_root_idx];
+	  }
   }
   for (bfs_root_idx = 0; bfs_root_idx < num_bfs_roots; ++bfs_root_idx)
   	  bfs_times[bfs_root_idx]=0.0;
 
   double performance_start = MPI_Wtime();
-
+  MPI_Barrier(MPI_COMM_WORLD);
   while(1){
 	  if (rank == 0)fprintf(stderr, "Starting cycle %d.\n", CyclesPassed);
 
@@ -605,8 +650,19 @@ int main(int argc, char** argv) {
 		memset(pred, 0, nlocalverts * sizeof(int64_t));
 
 		/* Do the actual BFS. */
+		MPI_Barrier(MPI_COMM_WORLD);
 		double bfs_start = MPI_Wtime();
-		run_bfs(root, &pred[0]);
+#ifdef DOONENODEOMPPURE
+		int64_t max_bfsvtx;
+	    if((size==1)&&(bDoOneNodePureOpenMP==1)){
+		  make_bfs_tree (&pred[0], &max_bfsvtx, root);
+	    }
+	    else
+	    	run_bfs(root, &pred[0]);
+#else
+	    run_bfs(root, &pred[0]);
+#endif
+		MPI_Barrier(MPI_COMM_WORLD);
 		double bfs_stop = MPI_Wtime();
 		bfs_times[bfs_root_idx] += bfs_stop - bfs_start;
 		if ((rank == 0)&&(ValidationStep)) fprintf(stderr, "Time for BFS %d is %f\n", bfs_root_idx, bfs_stop - bfs_start);
@@ -615,12 +671,31 @@ int main(int argc, char** argv) {
 		//if (!getenv("SKIP_VALIDATION")) {
 		if (ValidationStep) {
 		  if (rank == 0) fprintf(stderr, "Validating BFS %d\n", bfs_root_idx);
-
+		  MPI_Barrier(MPI_COMM_WORLD);
 		  double validate_start = MPI_Wtime();
 		  int64_t edge_visit_count;
-		  int validation_passed_one = validate_bfs_result_seq(&tg, nglobalverts, nlocalverts, root, pred, &edge_visit_count,max_used_vertex);
+		  int validation_passed_one;
+#ifdef DOONENODEOMPPURE
+	      if((size==1)&&(bDoOneNodePureOpenMP==1)){
+	    	int64_t result;
+	    	result=verify_bfs_tree (&pred[0], max_bfsvtx, root, tg.edgememory, tg.nglobaledges);
+	  	    if (result < 0){
+	  	    	validation_passed_one=0;
+	  	    	edge_visit_count=1;
+	        }
+	  	    else
+	  	    	edge_visit_count=result;
+	      }
+	      else
+	    	  validation_passed_one = validate_bfs_result_seq(&tg, nglobalverts, nlocalverts, root, pred, &edge_visit_count,max_used_vertex);
+#else
+	      validation_passed_one = validate_bfs_result_seq(&tg, nglobalverts, nlocalverts, root, pred, &edge_visit_count,max_used_vertex);
+#endif
+
 		  //int validation_passed_one = validate_bfs_result(&tg, max_used_vertex + 1, nlocalverts, root, pred, &edge_visit_count);
+		  MPI_Barrier(MPI_COMM_WORLD);
 		  double validate_stop = MPI_Wtime();
+
 		  validate_times[bfs_root_idx] = validate_stop - validate_start;
 		  if (rank == 0) fprintf(stderr, "Validate time for BFS %d is %f\n", bfs_root_idx, validate_times[bfs_root_idx]);
 		  edge_counts[bfs_root_idx] = (double)edge_visit_count;
@@ -637,6 +712,7 @@ int main(int argc, char** argv) {
 			  if (rank == 0) fprintf(stderr, "Validation failed for this BFS root; skipping rest.\n");
 			  break;
 		  }
+		  MPI_Barrier(MPI_COMM_WORLD);
 		}
 	  }
 	  CyclesPassed++;

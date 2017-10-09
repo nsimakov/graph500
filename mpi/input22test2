@@ -1,11 +1,11 @@
 22    #Scale
 16    #Edgefactor
 64    #num_bfs_roots
-1     #Use pure OpenMP Implementation for single node
-1     #Run performance section
+0     #Use pure OpenMP Implementation for single node
+0     #Run performance section
 1     #Run validation
 300   #Time for performance section in seconds
-1000  #Max number of cycles
+1  #Max number of cycles
 1878321 67108130 # [ 0] bfs_roots edge_visit_count
 1619978 67108130 # [ 1] bfs_roots edge_visit_count
 38458 67108130 # [ 2] bfs_roots edge_visit_count
