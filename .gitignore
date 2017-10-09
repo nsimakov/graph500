@@ -16,3 +16,5 @@ make-edgelist
 /generator/generator_test_omp
 /.cproject
 /.project
+/mpi214/out*
+/mpi214/graph500_mpi_replicated_csc_seqval
